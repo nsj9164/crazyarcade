@@ -1,0 +1,14 @@
+# Render Blueprint — 저장소를 연결하면 이 파일만으로 배포됩니다.
+# https://render.com  ->  New  ->  Blueprint  ->  이 저장소 선택
+services:
+  - type: web
+    name: crazyarcade
+    runtime: node
+    plan: free
+    region: singapore          # 한국에서 가장 가까운 무료 리전
+    buildCommand: npm ci --omit=dev
+    startCommand: node server/server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "20"

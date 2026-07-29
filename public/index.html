@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>크레이지 아케이드 - Crazy Arcade</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>💧</text></svg>">
+<style>
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{
+    height:100%;
+    background:#04203e;
+    background-image:
+      radial-gradient(circle at 20% 15%, #1b6fc4 0%, transparent 55%),
+      radial-gradient(circle at 82% 85%, #0d4a8c 0%, transparent 60%),
+      linear-gradient(#062a52, #021a33);
+    display:flex; align-items:center; justify-content:center;
+    font-family:"Malgun Gothic","맑은 고딕","Apple SD Gothic Neo",sans-serif;
+    overflow:hidden;
+  }
+  #wrap{ position:relative; margin-bottom:34px; }
+  canvas{
+    display:block; image-rendering:pixelated;
+    border:4px solid #0a2b52; border-radius:8px;
+    box-shadow:0 0 0 3px #2a7fd4, 0 18px 50px rgba(0,0,0,.65);
+    background:#000;
+  }
+  #hint{
+    position:absolute; left:0; right:0; bottom:-28px;
+    text-align:center; color:#8fc4f5; font-size:12px; letter-spacing:.4px;
+  }
+
+  /* ------------------------------------------------------------ 로비 */
+  #lobby{
+    position:absolute; inset:0; display:none;
+    align-items:center; justify-content:center;
+    background:rgba(4,22,44,.90); border-radius:8px; z-index:10;
+  }
+  #lobby.on{ display:flex; }
+  .card{
+    width:520px; max-height:98%; overflow:auto;
+    background:linear-gradient(#2f6bb0,#123a6a);
+    border:2px solid #0a2b52; border-radius:12px;
+    box-shadow:0 0 0 2px #4d9be8, 0 14px 40px rgba(0,0,0,.6);
+    padding:14px 18px; color:#fff;
+  }
+  .card h2{
+    font-size:20px; text-align:center; color:#ffe14a; margin-bottom:10px;
+    text-shadow:0 2px 0 rgba(0,0,0,.6); letter-spacing:2px;
+  }
+  .row{ display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  .row > label{ width:74px; font-size:13px; color:#9fd0ff; flex:none; }
+  input,select,button{
+    font-family:inherit; font-size:14px; border-radius:6px;
+    border:2px solid #0a2b52; padding:8px 10px; outline:none;
+  }
+  input,select{ background:#eaf4ff; color:#123a6a; flex:1; min-width:0; }
+  input:focus,select:focus{ box-shadow:0 0 0 2px #ffe14a; }
+  button{
+    background:linear-gradient(#5aa0e0,#2f6bb0); color:#fff; font-weight:bold;
+    cursor:pointer; border-color:#0a2b52; transition:filter .12s;
+  }
+  button:hover:not(:disabled){ filter:brightness(1.15); }
+  button:disabled{ opacity:.5; cursor:default; }
+  button.primary{ background:linear-gradient(#ffd24a,#e08a12); color:#7a3c00; }
+  button.on{ background:linear-gradient(#5ce85c,#2a9c2a); color:#0a3a0a; }
+  .divider{
+    display:flex; align-items:center; gap:10px; margin:14px 0;
+    color:#7fb0e0; font-size:12px;
+  }
+  .divider::before,.divider::after{
+    content:''; flex:1; height:1px; background:rgba(255,255,255,.22);
+  }
+  #lb-status{
+    min-height:20px; text-align:center; font-size:13px;
+    color:#ffd24a; margin-top:8px;
+  }
+  .codebox{
+    text-align:center; font-size:28px; font-weight:bold; letter-spacing:8px;
+    color:#ffe14a; background:rgba(0,0,0,.30); border-radius:8px;
+    padding:4px 0 6px; margin-bottom:8px; text-shadow:0 2px 0 rgba(0,0,0,.6);
+  }
+  #rm-players{ display:flex; flex-direction:column; gap:4px; margin-bottom:8px; }
+  .pl{
+    display:flex; align-items:center; gap:8px; font-size:13px;
+    background:rgba(0,0,0,.22); border-radius:6px; padding:5px 10px;
+  }
+  .pl.me{ background:rgba(255,225,74,.16); box-shadow:inset 0 0 0 1px rgba(255,225,74,.5); }
+  .pl.empty{ color:#6f90b4; justify-content:center; font-style:italic; }
+  .pl .nm{ flex:1; font-weight:bold; }
+  .pl .ch{ color:#9fd0ff; font-size:12px; }
+  .pl .st{ font-size:11px; padding:2px 7px; border-radius:10px; }
+  .st.host{ background:#e08a12; color:#fff; }
+  .st.rdy { background:#2a9c2a; color:#fff; }
+  .st.wait{ background:#4a5f78; color:#cfe2ff; }
+  .dot{ width:11px; height:11px; border-radius:50%; flex:none; }
+  .dot.c0{ background:#e8392f; } .dot.c1{ background:#2f6fe8; } .dot.c2{ background:#6b3fb8; }
+  #rm-chat{
+    height:84px; overflow-y:auto; background:rgba(0,0,0,.28);
+    border-radius:6px; padding:6px 9px; font-size:12.5px; margin-bottom:8px;
+  }
+  #rm-chat .msg{ margin-bottom:3px; word-break:break-all; }
+  #rm-chat .msg b{ color:#ffe14a; }
+  #rm-chat .sys{ color:#8fc4f5; font-style:italic; }
+  #rm-hint{ font-size:12px; color:#9fd0ff; text-align:center; margin-bottom:8px; }
+  .btns{ display:flex; gap:8px; }
+  .btns button{ flex:1; }
+  #rm-link{ font-size:11.5px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="cv" width="620" height="640"></canvas>
+
+  <!-- ------------------------------------------------ 로비 오버레이 -->
+  <div id="lobby">
+    <!-- 홈: 방 만들기 / 코드로 입장 -->
+    <div class="card" id="panel-home">
+      <h2>온 라 인 대 전</h2>
+
+      <div class="row">
+        <label>닉네임</label>
+        <input id="lb-nick" maxlength="12" placeholder="이름을 입력하세요" autocomplete="off">
+      </div>
+      <div class="row">
+        <label>캐릭터</label>
+        <select id="lb-char">
+          <option value="0">배찌 — 무난한 기본형</option>
+          <option value="1">다오 — 물풍선 많이</option>
+          <option value="2">마리드 — 빠르고 강함</option>
+        </select>
+      </div>
+
+      <div class="divider">방 만들기</div>
+      <div class="row">
+        <label>모드</label>
+        <select id="lb-mode">
+          <option value="coop">협동 — 같이 스테이지 클리어</option>
+          <option value="versus">대전 — 마지막 생존자 승리</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>봇</label>
+        <select id="lb-bots">
+          <option value="0">없음</option>
+          <option value="1" selected>1명</option>
+          <option value="2">2명</option>
+          <option value="3">3명</option>
+        </select>
+      </div>
+      <button id="lb-create" class="primary" style="width:100%">방 만들기</button>
+
+      <div class="divider">친구 방에 들어가기</div>
+      <div class="row">
+        <label>방 코드</label>
+        <input id="lb-code" maxlength="4" placeholder="ABCD" autocomplete="off"
+               style="text-transform:uppercase; letter-spacing:5px; font-weight:bold;">
+        <button id="lb-join" style="flex:none">입장</button>
+      </div>
+
+      <div id="lb-status"></div>
+      <div class="btns" style="margin-top:6px">
+        <button id="lb-close">타이틀로 돌아가기</button>
+      </div>
+    </div>
+
+    <!-- 방 안 -->
+    <div class="card" id="panel-room" style="display:none">
+      <h2>대 기 실</h2>
+      <div class="codebox" id="rm-code">----</div>
+
+      <div class="row">
+        <input id="rm-link" readonly>
+        <button id="rm-copy" style="flex:none">초대링크 복사</button>
+      </div>
+
+      <div id="rm-players"></div>
+
+      <div class="row">
+        <label>내 캐릭터</label>
+        <select id="rm-char">
+          <option value="0">배찌</option>
+          <option value="1">다오</option>
+          <option value="2">마리드</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>모드</label>
+        <select id="rm-mode">
+          <option value="coop">협동</option>
+          <option value="versus">대전</option>
+        </select>
+        <label style="width:34px">봇</label>
+        <select id="rm-bots" style="flex:none; width:80px">
+          <option value="0">없음</option>
+          <option value="1">1명</option>
+          <option value="2">2명</option>
+          <option value="3">3명</option>
+        </select>
+      </div>
+      <div id="rm-hint"></div>
+
+      <div id="rm-chat"></div>
+      <div class="row">
+        <input id="rm-say" maxlength="120" placeholder="메시지를 입력하세요" autocomplete="off">
+        <button id="rm-send" style="flex:none">전송</button>
+      </div>
+
+      <div class="btns">
+        <button id="rm-leave">나가기</button>
+        <button id="rm-ready">준비 완료</button>
+        <button id="rm-start" class="primary">게임 시작!</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="hint">방향키 / WASD 이동 &nbsp;·&nbsp; SPACE 물풍선 &nbsp;·&nbsp; ENTER 확인 &nbsp;·&nbsp; P 일시정지 &nbsp;·&nbsp; M 음소거</div>
+</div>
+
+<script src="config.js"></script>
+<script src="game.js"></script>
+<script src="net.js"></script>
+<script>
+  NET.bind();
+  G.init(document.getElementById('cv'));
+  // 초대 링크로 들어온 경우 바로 온라인 로비를 엽니다
+  if(new URLSearchParams(location.search).get('room')){
+    G.scene = 'lobby';
+    NET.openLobby(0);
+  }
+</script>
+</body>
+</html>

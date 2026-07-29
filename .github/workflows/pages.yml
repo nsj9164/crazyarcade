@@ -1,0 +1,33 @@
+# GitHub Pages 에는 클라이언트(public/)만 올립니다.
+# 싱글플레이는 여기서 바로 되고, 온라인은 public/config.js 의 CA_SERVER 에
+# Render 서버 주소를 넣어주면 이 주소에서도 동작합니다.
+name: Deploy client to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - id: deployment
+        uses: actions/deploy-pages@v4
