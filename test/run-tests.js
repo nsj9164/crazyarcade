@@ -429,6 +429,102 @@ function clientTests(){
     });
   }
 
+  /* --- 물풍선을 놓은 자리에서 빠져나올 수 있는가 (회귀 방지) ---
+         중심 기준으로 통과 판정을 하면 몸통이 13px 걸친 구간에서 완전히 갇힙니다. */
+  {
+    const sb = makeClientSandbox(); loadGame(sb);
+    const res = runInGame(sb, `
+      (function(){
+        const T=G._test, {tick,keys,pressed}=T;
+        G.charSel=0; G.startSingle();
+        for(let i=0;i<130;i++){ __t+=16.7; tick(1/60); }
+        for(let i=T.players.length-1;i>=0;i--) if(T.players[i].isAI) T.players.splice(i,1);
+        const p=T.players[0];
+        const move={};
+        for(const [dir,key,axis] of [['left','ArrowLeft','x'],['right','ArrowRight','x'],
+                                     ['up','ArrowUp','y'],['down','ArrowDown','y']]){
+          for(let y=1;y<12;y++) for(let x=1;x<14;x++) if(T.map[y][x]===2) T.map[y][x]=0;
+          T.balloons.length=0;
+          p.x=7*40+20; p.y=5*40+20; p.alive=true; p.trapped=false;
+          const s0=p[axis];
+          pressed['Space']=true; tick(1/60);
+          for(const k in keys) keys[k]=false;
+          keys[key]=true;
+          for(let i=0;i<90;i++){ __t+=16.7; tick(1/60); }
+          for(const k in keys) keys[k]=false;
+          move[dir]=Math.round(Math.abs(p[axis]-s0));
+        }
+        // 완전히 빠져나온 뒤에는 다시 통과할 수 없어야 합니다
+        for(let y=1;y<12;y++) for(let x=1;x<14;x++) if(T.map[y][x]===2) T.map[y][x]=0;
+        T.balloons.length=0;
+        p.x=1*40+20; p.y=1*40+20;
+        pressed['Space']=true; tick(1/60);
+        for(const k in keys) keys[k]=false;
+        keys['ArrowDown']=true;
+        for(let i=0;i<60;i++){ __t+=16.7; tick(1/60); }
+        for(const k in keys) keys[k]=false;
+        keys['ArrowUp']=true;
+        for(let i=0;i<60;i++){ __t+=16.7; tick(1/60); }
+        for(const k in keys) keys[k]=false;
+        return JSON.stringify({ move, backTileY:Math.floor(p.y/40),
+          balloonY: T.balloons[0]?T.balloons[0].gy:null });
+      })()
+    `);
+    const r = JSON.parse(res);
+    for(const d of ['left','right','up','down'])
+      check('물풍선 설치 후 ' + d + ' 방향으로 탈출 가능 (' + r.move[d] + 'px)',
+            () => assert.ok(r.move[d] >= 30,
+              '갇혔습니다 — ' + d + ' 이동량 ' + r.move[d] + 'px'));
+    check('빠져나온 뒤에는 물풍선이 다시 벽이 됨', () => {
+      assert.strictEqual(r.balloonY, 1, '검증 시점에 물풍선이 사라짐');
+      assert.ok(r.backTileY > r.balloonY, '물풍선을 통과해 되돌아갔습니다');
+    });
+  }
+
+  /* --- 시작 능력치 / 실제 폭발 범위 --- */
+  {
+    const sb = makeClientSandbox(); loadGame(sb);
+    const res = runInGame(sb, `
+      (function(){
+        const T=G._test, {tick,pressed}=T;
+        const out={chars:[], bots:{}};
+        for(const ci of [0,1,2]){
+          G.charSel=ci; G.startSingle();
+          for(let i=0;i<130;i++){ __t+=16.7; tick(1/60); }
+          for(let i=T.players.length-1;i>=0;i--) if(T.players[i].isAI) T.players.splice(i,1);
+          const p=T.players[0];
+          for(let y=1;y<12;y++) for(let x=1;x<14;x++) if(T.map[y][x]===2) T.map[y][x]=0;
+          // 봇이 미리 깔아둔 물풍선/물줄기를 치워야 내 폭발만 측정됩니다
+          T.balloons.length=0; T.waters.length=0;
+          p.x=7*40+20; p.y=5*40+20;
+          pressed['Space']=true; tick(1/60);
+          let reach=0;
+          for(let i=0;i<260;i++){
+            __t+=16.7; tick(1/60);
+            for(const w of T.waters) if(w.t>=0)
+              reach=Math.max(reach, Math.abs(w.gx-7)+Math.abs(w.gy-5));
+          }
+          out.chars.push({name:p.skin.name, power:p.power, maxB:p.maxB, reach});
+        }
+        G.charSel=0; G.startSingle();
+        out.bots = { power:T.players.filter(x=>x.isAI).map(b=>b.power) };
+        return JSON.stringify(out);
+      })()
+    `);
+    const r = JSON.parse(res);
+    check('1스테이지 시작 물줄기는 1 (기본 캐릭터)',
+          () => assert.strictEqual(r.chars[0].power, 1));
+    check('1스테이지 시작 물풍선은 1 (기본 캐릭터)',
+          () => assert.strictEqual(r.chars[0].maxB, 1));
+    check('1스테이지 봇 물줄기도 1', () => assert.ok(r.bots.power.every(v=>v===1),
+          '봇 물줄기 ' + JSON.stringify(r.bots.power)));
+    for(const c of r.chars)
+      check(c.name + ': 실제 폭발 범위(' + c.reach + ') = 물줄기 수치(' + c.power + ')',
+            () => assert.strictEqual(c.reach, c.power));
+    check('어떤 캐릭터도 시작 물줄기가 2를 넘지 않음',
+          () => assert.ok(r.chars.every(c => c.power <= 2)));
+  }
+
   /* --- 맵 생성 결정성 (같은 시드 -> 같은 맵) --- */
   {
     const a = makeClientSandbox(); loadGame(a);

@@ -20,15 +20,15 @@ const CHARS = [
   { name:'배찌',  hood:'#e8392f', hood2:'#a81d16', skin:'#fff4e2', trim:'#ffffff',
     ear:'#e8392f', belly:'#ffd9c0',
     desc:'모든 능력이 고루 뛰어난 기본 캐릭터.\n처음 시작하는 분께 추천해요!',
-    balloons:2, power:2, speed:3 },
+    balloons:1, power:1, speed:3 },
   { name:'다오',  hood:'#2f6fe8', hood2:'#1a3f9e', skin:'#ffeede', trim:'#ffe14a',
     ear:'#2f6fe8', belly:'#cfe2ff',
     desc:'물풍선을 한 번에 많이 놓을 수 있어\n함정을 깔고 길을 막는 데 강해요!',
-    balloons:3, power:1, speed:3 },
+    balloons:2, power:1, speed:3 },
   { name:'마리드', hood:'#6b3fb8', hood2:'#3d2172', skin:'#f0e2ff', trim:'#c9a4ff',
     ear:'#6b3fb8', belly:'#e2d1ff',
-    desc:'발이 빠르고 물줄기가 길지만\n물풍선은 하나뿐! 상급자용이에요.',
-    balloons:1, power:3, speed:4 },
+    desc:'발이 빠르고 물줄기가 조금 길어요.\n대신 물풍선은 하나뿐! 상급자용.',
+    balloons:1, power:2, speed:4 },
 ];
 const ENEMY_SKINS = [
   { name:'다크배찌', hood:'#4a4a52', hood2:'#26262c', skin:'#d9d9e2', trim:'#8e8e9c', ear:'#4a4a52', belly:'#c4c4d0' },
@@ -208,7 +208,7 @@ function mkPlayer(o){
     maxB: skin.balloons || 1, power: skin.power || 1,
     spd: 70 + (skin.speed||2)*10, needle:0,
     alive:true, out:false, trapped:false, trapT:0, struggle:0,
-    inv:1.2, ignore:null, respawn:0, lives:o.lives, score:0,
+    inv:1.2, respawn:0, lives:o.lives, score:0,
     input:{l:0,r:0,u:0,d:0,bomb:0,mash:0}, _bomb:0, _mash:0,
     skill:.5, think:0, goal:null, wander:0,
   };
@@ -246,17 +246,24 @@ function spawnPlayers(cfg){
 
   for(let i=0;i<botCount;i++){
     const s = SPAWNS[(humans.length + i) % SPAWNS.length];
-    const b = mkPlayer({
+    players.push(tuneBot(mkPlayer({
       id: -(i+1), charIdx:i, isAI:true,
       team: MODE === 'versus' ? 100+i : 1,
-      tx:s[0], ty:s[1], lives: MODE === 'versus' ? 1 : 1,
-    });
-    b.maxB  = 1 + Math.floor(stageDef.ai*2);
-    b.power = 1 + Math.floor(stageDef.ai*2);
-    b.spd   = 62 + stageDef.ai*38;
-    b.skill = stageDef.ai;
-    players.push(b);
+      tx:s[0], ty:s[1], lives:1,
+    })));
   }
+}
+
+/* 봇 능력치는 스테이지 난이도에 따라 단계적으로 올라갑니다.
+   초반 스테이지부터 물줄기가 길면 손 쓸 새 없이 당하기 때문입니다. */
+function botTier(){ return stageDef.ai < .7 ? 1 : stageDef.ai < .9 ? 2 : 3; }
+function tuneBot(b){
+  const t = botTier();
+  b.maxB  = t;
+  b.power = t;
+  b.spd   = 62 + stageDef.ai*38;
+  b.skill = stageDef.ai;
+  return b;
 }
 
 const isEnemy = (a,b) => a.team !== b.team;
@@ -268,15 +275,37 @@ function solidTile(x,y){
   if(x<0||y<0||x>=COLS||y>=ROWS) return true;
   return map[y][x]===WALL || map[y][x]===BOX;
 }
+/* 플레이어 몸통(26x26)이 해당 타일과 겹치는지 */
+function overlapsTile(p, tx, ty){
+  const s = 13;
+  return p.x + s > tx*TILE && p.x - s < (tx+1)*TILE &&
+         p.y + s > ty*TILE && p.y - s < (ty+1)*TILE;
+}
+/* 물풍선을 그 플레이어가 통과할 수 있는지.
+   설치한 순간 그 타일에 겹쳐 있던 사람은 몸이 완전히 빠져나갈 때까지 통과합니다.
+   (중심 기준으로 판정하면 몸통이 아직 걸친 13px 구간에서 갇혀버립니다) */
+function canPass(b, p){
+  return !!(p && b.pass && b.pass.indexOf(p.id) >= 0);
+}
 function blocked(px,py,p){
   const s=13;
   for(const [ox,oy] of [[-s,-s],[s,-s],[-s,s],[s,s]]){
     const X=Math.floor((px+ox)/TILE), Y=Math.floor((py+oy)/TILE);
     if(solidTile(X,Y)) return true;
     const b = balloonAt(X,Y);
-    if(b && !(p && p.ignore && p.ignore.gx===X && p.ignore.gy===Y)) return true;
+    if(b && !canPass(b,p)) return true;
   }
   return false;
+}
+/* 몸이 완전히 빠져나간 사람은 통과 권한을 잃습니다 */
+function updateBalloonPass(){
+  for(const b of balloons){
+    if(!b.pass || !b.pass.length) continue;
+    for(let i=b.pass.length-1;i>=0;i--){
+      const p = players.find(q=>q.id===b.pass[i]);
+      if(!p || !overlapsTile(p, b.gx, b.gy)) b.pass.splice(i,1);
+    }
+  }
 }
 function moveP(p,dx,dy,dist){
   if(dx){
@@ -303,8 +332,11 @@ function placeBalloon(p){
   const X=gx(p.x), Y=gx(p.y);
   if(balloonAt(X,Y)) return false;
   if(balloons.filter(b=>b.owner===p).length >= p.maxB) return false;
-  balloons.push({ gx:X, gy:Y, t:3.0, owner:p, power:p.power });
-  p.ignore = {gx:X, gy:Y};
+  /* 설치 순간 이 타일에 몸이 걸친 사람은 모두 통과 권한을 받습니다
+     (놓은 사람뿐 아니라 같이 서 있던 사람도 갇히지 않도록) */
+  const pass = players.filter(q => q.alive && overlapsTile(q, X, Y)).map(q => q.id);
+  if(pass.indexOf(p.id) < 0) pass.push(p.id);
+  balloons.push({ gx:X, gy:Y, t:3.0, owner:p, power:p.power, pass });
   sfx('place');
   return true;
 }
@@ -381,7 +413,7 @@ function doRespawn(p){
   const free = SPAWNS.filter(([x,y])=> map[y][x]===EMPTY && !balloonAt(x,y));
   const s = free.length ? free[irnd(0,free.length-1)] : p.spawn;
   p.x=cx(s[0]); p.y=cx(s[1]); p.tx=p.x; p.ty=p.y;
-  p.alive=true; p.trapped=false; p.inv=2.2; p.ignore=null;
+  p.alive=true; p.trapped=false; p.inv=2.2;
   p.maxB=Math.max(1,p.maxB-1); p.power=Math.max(1,p.power-1);
 }
 function applyItem(p,kind){
@@ -560,6 +592,8 @@ function simulate(dt){
   timeLeft -= dt;
   if(timeLeft<=0){ timeLeft=0; return finishByTime(); }
 
+  updateBalloonPass();
+
   for(const p of players){
     if(p.out && !p.alive) continue;
     if(!p.alive){
@@ -570,10 +604,6 @@ function simulate(dt){
     if(p.inv>0) p.inv -= dt;
     p.anim = p.moving ? p.anim + dt*9 : 0;
 
-    if(p.ignore){
-      const X=gx(p.x), Y=gx(p.y);
-      if(X!==p.ignore.gx||Y!==p.ignore.gy||!balloonAt(p.ignore.gx,p.ignore.gy)) p.ignore=null;
-    }
     if(p.trapped){
       p.trapT -= dt; p.moving=false;
       if(p.isAI){ if(p.trapT<=0) killPlayer(p,null); }
@@ -654,7 +684,7 @@ function resetPositions(){
   players.forEach((p,i)=>{
     const s=SPAWNS[i%SPAWNS.length];
     p.x=cx(s[0]); p.y=cx(s[1]); p.tx=p.x; p.ty=p.y;
-    p.alive=!p.out; p.trapped=false; p.inv=1.5; p.ignore=null; p.respawn=0;
+    p.alive=!p.out; p.trapped=false; p.inv=1.5; p.respawn=0;
   });
 }
 function announceOver(){
@@ -693,14 +723,12 @@ function spawnKeepStats(){
   humans.forEach((p,i)=>{
     const s=SPAWNS[i%SPAWNS.length];
     p.x=cx(s[0]); p.y=cx(s[1]); p.tx=p.x; p.ty=p.y;
-    p.alive=!p.out; p.trapped=false; p.inv=1.5; p.ignore=null; p.respawn=0;
+    p.alive=!p.out; p.trapped=false; p.inv=1.5; p.respawn=0;
   });
   for(let i=0;i<stageDef.enemies;i++){
     const s=SPAWNS[(humans.length+i)%SPAWNS.length];
-    const b=mkPlayer({id:-(i+1),charIdx:i,isAI:true,team:1,tx:s[0],ty:s[1],lives:1});
-    b.maxB=1+Math.floor(stageDef.ai*2); b.power=1+Math.floor(stageDef.ai*2);
-    b.spd=62+stageDef.ai*38; b.skill=stageDef.ai;
-    players.push(b);
+    players.push(tuneBot(mkPlayer(
+      {id:-(i+1),charIdx:i,isAI:true,team:1,tx:s[0],ty:s[1],lives:1})));
   }
 }
 
@@ -714,7 +742,7 @@ function buildSnap(){
         p.alive?1:0, p.trapped?1:0, r1(p.trapT), r1(p.inv), p.maxB, p.power,
         Math.round(p.spd), p.needle, p.score, p.lives, p.charIdx, p.team,
         p.isAI?1:0, p.out?1:0, r1(p.respawn)]),
-    bs: balloons.map(b=>[b.gx,b.gy,r2(b.t),b.power]),
+    bs: balloons.map(b=>[b.gx,b.gy,r2(b.t),b.power, b.pass||[]]),
     ws: waters.map(w=>[w.gx,w.gy,WKIND.indexOf(w.kind),r2(w.t),r2(w.life)]),
     it: items.map(i=>[i.gx,i.gy,ITEMS.indexOf(i.kind)]),
   };
@@ -750,7 +778,7 @@ function applySnap(s){
   }
   players = players.filter(p=>seen.has(p.id));
 
-  balloons = s.bs.map(b=>({gx:b[0],gy:b[1],t:b[2],power:b[3],owner:null}));
+  balloons = s.bs.map(b=>({gx:b[0],gy:b[1],t:b[2],power:b[3],owner:null,pass:b[4]||[]}));
   waters   = s.ws.map(w=>({gx:w[0],gy:w[1],kind:WKIND[w[2]],t:w[3],life:w[4]}));
   items    = s.it.map(i=>({gx:i[0],gy:i[1],kind:ITEMS[i[2]],t:0}));
 }
@@ -1465,6 +1493,7 @@ return {
     get map(){ return map; },
     get scene(){ return scene; },
     get balloons(){ return balloons; },
+    get waters(){ return waters; },
     get items(){ return items; },
     get mode(){ return MODE; },
     get role(){ return ROLE; },
