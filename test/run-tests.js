@@ -525,6 +525,248 @@ function clientTests(){
           () => assert.ok(r.chars.every(c => c.power <= 2)));
   }
 
+  /* --- 아이템 시스템 --- */
+  {
+    const sb = makeClientSandbox(); loadGame(sb);
+    const R = code => JSON.parse(runInGame(sb, `(function(){
+      const T=G._test, {tick,keys,pressed}=T;
+      function arena(){                       // 봇 없는 빈 경기장
+        G.charSel=0; G.startSingle();
+        for(let i=0;i<130;i++){ __t+=16.7; tick(1/60); }
+        for(let i=T.players.length-1;i>=0;i--) if(T.players[i].isAI) T.players.splice(i,1);
+        for(let y=1;y<12;y++) for(let x=1;x<14;x++) if(T.map[y][x]===2) T.map[y][x]=0;
+        T.balloons.length=0; T.waters.length=0; T.items.length=0;
+        for(const k in keys) keys[k]=false;
+        return T.players[0];
+      }
+      ${code}
+    })()`));
+
+    /* 보유 슬롯 2칸 + FIFO */
+    const inv = R(`
+      const p=arena();
+      const seq=[];
+      for(const k of ['jump','needle','throw','kick']){
+        T.applyItem(p,k); seq.push(p.hold.slice());
+      }
+      return JSON.stringify({seq, final:p.hold});
+    `);
+    check('보유 아이템은 최대 2개', () => assert.strictEqual(inv.final.length, 2));
+    check('3번째를 먹으면 먼저 먹은 것이 밀려남',
+          () => assert.deepStrictEqual(inv.seq[2], ['needle','throw']));
+    check('4번째까지 먹으면 최신 2개만 남음',
+          () => assert.deepStrictEqual(inv.final, ['throw','kick']));
+
+    /* 누적 스탯은 슬롯을 차지하지 않음 */
+    const stat = R(`
+      const p=arena();
+      const b0=p.maxB, w0=p.power, s0=p.spd;
+      T.applyItem(p,'balloon'); T.applyItem(p,'power'); T.applyItem(p,'shoes');
+      return JSON.stringify({dB:p.maxB-b0, dW:p.power-w0, dS:p.spd-s0, hold:p.hold.length});
+    `);
+    check('물방울/물줄기/신발은 누적 스탯 (+1씩)', () => {
+      assert.strictEqual(stat.dB, 1); assert.strictEqual(stat.dW, 1);
+      assert.ok(stat.dS > 0);
+    });
+    check('누적 스탯은 보유 슬롯을 쓰지 않음', () => assert.strictEqual(stat.hold, 0));
+
+    /* 즉시 발동 아이템도 슬롯을 쓰지 않음 */
+    const inst = R(`
+      const p=arena();
+      T.applyItem(p,'devil');
+      const devil=p.devilT>0;
+      T.applyItem(p,'super');
+      const cured=p.devilT<=0 && p.superT>0;
+      T.applyItem(p,'devil');
+      const blocked=p.devilT<=0;         // 슈퍼맨 중에는 악마에 안 걸림
+      const p2=arena();
+      T.applyItem(p2,'web');   const web=p2.webT>0;
+      T.applyItem(p2,'ship');  const ship=p2.shipT>0;
+      return JSON.stringify({devil,cured,blocked,web,ship,hold:p.hold.length});
+    `);
+    check('악마를 먹으면 효과가 걸림', () => assert.ok(inst.devil));
+    check('슈퍼맨을 먹으면 악마가 해제됨', () => assert.ok(inst.cured));
+    check('슈퍼맨 상태에서는 악마에 걸리지 않음', () => assert.ok(inst.blocked));
+    check('거미줄/우주선도 즉시 발동', () => { assert.ok(inst.web); assert.ok(inst.ship); });
+    check('즉시 발동 아이템은 보유 슬롯을 쓰지 않음', () => assert.strictEqual(inst.hold, 0));
+
+    /* 악마: 조작 반대 + 자동 발사 */
+    const dev = R(`
+      const p=arena();
+      p.x=7*40+20; p.y=5*40+20;
+      T.applyItem(p,'devil');
+      const x0=p.x;
+      keys['ArrowRight']=true;
+      for(let i=0;i<30;i++){ __t+=16.7; tick(1/60); }
+      for(const k in keys) keys[k]=false;
+      const wentLeft = p.x < x0;
+      const before=T.balloons.length;
+      for(let i=0;i<70;i++){ __t+=16.7; tick(1/60); }
+      return JSON.stringify({wentLeft, autoFired: T.balloons.length>0 || before>0});
+    `);
+    check('악마: 오른쪽을 눌러도 왼쪽으로 감', () => assert.ok(dev.wentLeft));
+    check('악마: 물풍선이 자동으로 나감', () => assert.ok(dev.autoFired));
+
+    /* 거미줄은 느려지고 슈퍼맨은 빨라짐 */
+    const spd = R(`
+      const p=arena();
+      const base=T.moveSpeed(p);
+      T.applyItem(p,'web');   const slow=T.moveSpeed(p);
+      const p2=arena();
+      T.applyItem(p2,'super'); const fast=T.moveSpeed(p2);
+      return JSON.stringify({base, slow, fast});
+    `);
+    check('거미줄을 밟으면 느려짐', () => assert.ok(spd.slow < spd.base));
+    check('슈퍼맨은 최고 속도', () => assert.ok(spd.fast > spd.base));
+
+    /* 방패는 물줄기를 한 번 막고 사라짐 */
+    const shd = R(`
+      const p=arena();
+      T.applyItem(p,'shield');
+      p.inv=0;
+      T.trapPlayer(p);
+      const blocked = !p.trapped && p.hold.length===0;
+      p.inv=0;
+      T.trapPlayer(p);
+      return JSON.stringify({blocked, thenTrapped:p.trapped});
+    `);
+    check('방패: 물줄기를 한 번 막아줌', () => assert.ok(shd.blocked));
+    check('방패: 한 번 쓰면 사라짐 (다음엔 갇힘)', () => assert.ok(shd.thenTrapped));
+
+    /* 바늘은 갇혔을 때 혼자 빠져나옴 */
+    const ndl = R(`
+      const p=arena();
+      T.applyItem(p,'needle');
+      p.inv=0; T.trapPlayer(p);
+      const trapped=p.trapped;
+      for(let i=0;i<6;i++){ __t+=16.7; tick(1/60); }
+      return JSON.stringify({trapped, escaped:!p.trapped, hold:p.hold.length});
+    `);
+    check('바늘: 갇혀도 혼자 탈출', () => { assert.ok(ndl.trapped); assert.ok(ndl.escaped); });
+    check('바늘: 쓰고 나면 사라짐', () => assert.strictEqual(ndl.hold, 0));
+
+    /* 점프 / 던지기 / 발차기 */
+    const abil = R(`
+      const p=arena();
+      // 점프: 앞으로 건너뜀
+      p.x=1*40+20; p.y=1*40+20; p.dir='down';
+      T.applyItem(p,'jump');
+      const y0=p.y;
+      p.input.jump++; T.applyHumanInput(p, 1/60);
+      const jumped=Math.round((p.y-y0)/40);
+
+      // 던지기: 밟고 있는 물풍선을 앞으로 날림
+      const p2=arena();
+      p2.x=7*40+20; p2.y=5*40+20; p2.dir='right';
+      T.applyItem(p2,'throw');
+      T.placeBalloon(p2);
+      p2.input.bomb++; T.applyHumanInput(p2, 1/60);
+      const b=T.balloons[0];
+      const flying = !!(b && b.fly);
+      const dest = b && b.fly ? b.fly.tx - 7 : 0;
+      for(let i=0;i<40;i++){ __t+=16.7; tick(1/60); }
+      const landed = T.balloons[0] ? T.balloons[0].gx : null;
+
+      // 발차기: 앞의 물풍선을 밀어냄
+      const p3=arena();
+      p3.x=7*40+20; p3.y=5*40+20;
+      T.applyItem(p3,'kick');
+      T.balloons.push({gx:8,gy:5,t:3,power:1,owner:null,pass:[]});
+      p3.dir='right';
+      // 실제 플레이처럼 여러 프레임에 걸쳐 물풍선 쪽으로 걸어갑니다
+      let kicked=false;
+      for(let i=0;i<12 && !kicked;i++){
+        T.moveWithAbility(p3, 1, 0, 1.5);
+        kicked = !!(T.balloons[0] && T.balloons[0].slide);
+      }
+      const kickedGx = T.balloons[0] ? T.balloons[0].gx : null;
+      return JSON.stringify({jumped, flying, dest, landed, kicked, kickedGx});
+    `);
+    check('점프: 앞으로 건너뜀 (' + abil.jumped + '칸)', () => assert.ok(abil.jumped >= 1));
+    check('던지기: 물풍선이 날아감', () => assert.ok(abil.flying));
+    check('던지기: 바라보는 방향으로 날아감', () => assert.ok(abil.dest > 0));
+    check('던지기: 날아간 자리에 착지', () => assert.ok(abil.landed > 7));
+    check('발차기: 앞의 물풍선이 굴러감', () => assert.ok(abil.kicked));
+
+    /* 물줄기에 닿은 아이템은 사라짐 */
+    const wash = R(`
+      const p=arena();
+      p.x=1*40+20; p.y=1*40+20;
+      T.items.push({gx:7,gy:5,kind:'balloon',t:0});
+      const before=T.items.length;
+      T.addWater(7,5,'center',0);
+      for(let i=0;i<8;i++){ __t+=16.7; tick(1/60); }
+      return JSON.stringify({before, after:T.items.length});
+    `);
+    check('아이템이 물줄기에 닿으면 사라짐', () => {
+      assert.strictEqual(wash.before, 1);
+      assert.strictEqual(wash.after, 0);
+    });
+  }
+
+  /* --- 물방울 갇힘: 상대편은 죽이고 같은 편은 살림 --- */
+  {
+    const sb = makeClientSandbox(); loadGame(sb);
+    const res = runInGame(sb, `
+      (function(){
+        const T=G._test, {tick}=T;
+        // 대전: 서로 다른 팀
+        G.startNet({role:'host',mode:'versus',myId:1,seed:4242,
+          players:[{id:1,nick:'가',charIdx:0},{id:2,nick:'나',charIdx:1}], bots:0});
+        for(let i=0;i<130;i++){ __t+=16.7; tick(1/60); }
+        let a=T.players.find(p=>p.id===1), b=T.players.find(p=>p.id===2);
+        b.trapped=true; b.trapT=5; b.x=a.x+8; b.y=a.y;
+        for(let i=0;i<4;i++){ __t+=16.7; tick(1/60); }
+        const enemyKilled = !b.alive && b.out;
+
+        // 협동: 같은 팀
+        G.startNet({role:'host',mode:'coop',myId:1,seed:4242,
+          players:[{id:1,nick:'가',charIdx:0},{id:2,nick:'나',charIdx:1}], bots:0});
+        for(let i=0;i<130;i++){ __t+=16.7; tick(1/60); }
+        a=T.players.find(p=>p.id===1); b=T.players.find(p=>p.id===2);
+        b.trapped=true; b.trapT=5; b.x=a.x+8; b.y=a.y;
+        for(let i=0;i<4;i++){ __t+=16.7; tick(1/60); }
+        const allyFreed = b.alive && !b.trapped;
+        return JSON.stringify({enemyKilled, allyFreed});
+      })()
+    `);
+    const r = JSON.parse(res);
+    check('상대편 물방울에 부딪히면 터뜨리고 죽임', () => assert.ok(r.enemyKilled));
+    check('같은 편 물방울에 부딪히면 살려줌', () => assert.ok(r.allyFreed));
+  }
+
+  /* --- 죽으면 스테이지 중 부활 없음 / 다음 스테이지에서 부활 --- */
+  {
+    const sb = makeClientSandbox(); loadGame(sb);
+    const res = runInGame(sb, `
+      (function(){
+        const T=G._test, {tick,pressed}=T;
+        G.startNet({role:'host',mode:'coop',myId:1,seed:900,
+          players:[{id:1,nick:'가',charIdx:0},{id:2,nick:'나',charIdx:1}], bots:0});
+        for(let i=0;i<130;i++){ __t+=16.7; tick(1/60); }
+        const dead=T.players.find(p=>p.id===2);
+        T.killPlayer(dead, null);
+        const itemsAfterDeath = T.items.length;
+        for(let i=0;i<400;i++){ __t+=16.7; tick(1/60); }   // 6초 넘게 대기
+        const stillDead = !dead.alive && dead.out;
+        // 봇을 모두 제거해 스테이지 클리어 -> 다음 스테이지로
+        for(const p of T.players) if(p.isAI){ p.alive=false; p.out=true; }
+        for(let i=0;i<10;i++){ __t+=16.7; tick(1/60); }
+        const cleared=T.scene;
+        pressed['Enter']=true;
+        for(let i=0;i<5;i++){ __t+=16.7; tick(1/60); }
+        const revived=T.players.find(p=>p.id===2);
+        return JSON.stringify({itemsAfterDeath, stillDead, cleared,
+                               revivedAlive: !!(revived && revived.alive && !revived.out)});
+      })()
+    `);
+    const r = JSON.parse(res);
+    check('죽어도 아이템을 떨어뜨리지 않음', () => assert.strictEqual(r.itemsAfterDeath, 0));
+    check('스테이지 도중에는 부활하지 않음', () => assert.ok(r.stillDead));
+    check('스테이지를 넘기면 다시 살아남',
+          () => { assert.strictEqual(r.cleared,'clear'); assert.ok(r.revivedAlive); });
+  }
+
   /* --- 맵 생성 결정성 (같은 시드 -> 같은 맵) --- */
   {
     const a = makeClientSandbox(); loadGame(a);
