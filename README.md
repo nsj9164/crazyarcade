@@ -11,10 +11,17 @@
 
 ## 바로 해보기
 
-| | 주소 | 온라인 |
-|---|---|:--:|
-| **Render** (권장) | 배포 후 `https://<서비스명>.onrender.com` | 지원 |
-| GitHub Pages | https://nsj9164.github.io/crazyarcade/ | 설정 필요 (아래 참고) |
+**▶ https://nsj9164.github.io/crazyarcade/** — 싱글플레이는 지금 바로 됩니다.
+
+온라인 멀티플레이는 WebSocket 서버가 필요합니다. 아래 버튼으로 무료 배포하세요.
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/nsj9164/crazyarcade)
+
+버튼 → Render 로그인 → **Apply**. `render.yaml` 이 들어 있어 설정할 게 없습니다.
+2~3분 뒤 나오는 `https://<서비스명>.onrender.com` 으로 들어가면 온라인까지 전부 동작합니다.
+
+> 그 주소를 `public/config.js` 의 `CA_SERVER` 에 적어두면
+> GitHub Pages 주소에서도 온라인이 됩니다.
 
 로컬에서 돌리려면:
 
