@@ -399,13 +399,18 @@ function explode(b, chain){
     }
   }
 }
-function addWater(x,y,kind,delay){ waters.push({gx:x,gy:y,kind,t:-(delay||0),life:.55}); }
+const WATER_LIFE = 0.55;
+function addWater(x,y,kind,delay){ waters.push({gx:x,gy:y,kind,t:-(delay||0),life:WATER_LIFE}); }
 function popBox(x,y,owner){
   for(let i=0;i<7;i++)
     fx.push({x:cx(x)+rnd(-10,10),y:cx(y)+rnd(-10,10),vx:rnd(-60,60),vy:rnd(-120,-30),
              t:.5,c:stageDef.boxTop,s:rnd(3,6)});
   if(owner && !owner.isAI) owner.score += 20;
-  if(Math.random()<0.38) items.push({gx:x, gy:y, kind:rollItem(), t:0});
+  /* 아이템은 상자를 부순 물줄기가 걷힌 뒤에 나타납니다.
+     t<0 동안은 잠복 상태라 그리지도, 줍지도, 물에 씻기지도 않습니다.
+     (이게 없으면 상자를 부순 그 물줄기가 방금 나온 아이템을 곧바로 지워버립니다) */
+  if(Math.random()<0.38)
+    items.push({gx:x, gy:y, kind:rollItem(), t:-(WATER_LIFE + 0.07)});
 }
 
 /* ============================================================== 피격 */
@@ -819,7 +824,9 @@ function simulate(dt){
     /* 아이템 */
     const X=gx(p.x), Y=gx(p.y);
     for(let i=items.length-1;i>=0;i--)
-      if(items[i].gx===X && items[i].gy===Y){ const it=items[i]; items.splice(i,1); applyItem(p,it.kind); }
+      if(items[i].t>=0 && items[i].gx===X && items[i].gy===Y){
+        const it=items[i]; items.splice(i,1); applyItem(p,it.kind);
+      }
 
     /* 슈퍼맨과 정상 우주선은 물줄기에 맞지 않습니다 */
     const immune = p.superT>0 || (p.shipT>0 && !p.shipBad);
@@ -835,7 +842,7 @@ function simulate(dt){
     if(w.t>w.life) waters.splice(i,1);
     else if(w.t>=0)
       for(let j=items.length-1;j>=0;j--)
-        if(items[j].gx===w.gx&&items[j].gy===w.gy) items.splice(j,1);
+        if(items[j].t>=0 && items[j].gx===w.gx && items[j].gy===w.gy) items.splice(j,1);
   }
   for(let i=fx.length-1;i>=0;i--){
     const f=fx[i]; f.t-=dt; f.x+=f.vx*dt; f.y+=f.vy*dt; f.vy+=420*dt;
@@ -959,7 +966,7 @@ function buildSnap(){
         b.slide?[b.slide.dx,b.slide.dy,r2(b.st)]:0,
         b.fly?[b.fly.sx,b.fly.sy,b.fly.tx,b.fly.ty,r2(b.fly.t),b.fly.dur]:0]),
     ws: waters.map(w=>[w.gx,w.gy,WKIND.indexOf(w.kind),r2(w.t),r2(w.life)]),
-    it: items.map(i=>[i.gx,i.gy,ITEMS.indexOf(i.kind)]),
+    it: items.map(i=>[i.gx,i.gy,ITEMS.indexOf(i.kind),r2(i.t)]),
   };
   mapDirty = false;
   return s;
@@ -1004,7 +1011,7 @@ function applySnap(s){
     fly:   b[6] ? {sx:b[6][0],sy:b[6][1],tx:b[6][2],ty:b[6][3],t:b[6][4],dur:b[6][5]} : null,
   }));
   waters   = s.ws.map(w=>({gx:w[0],gy:w[1],kind:WKIND[w[2]],t:w[3],life:w[4]}));
-  items    = s.it.map(i=>({gx:i[0],gy:i[1],kind:ITEMS[i[2]],t:0}));
+  items    = s.it.map(i=>({gx:i[0],gy:i[1],kind:ITEMS[i[2]],t:i[3]||0}));
 }
 
 /* guest: 내 캐릭터만 로컬 예측해서 조작감을 살립니다 */
@@ -1382,7 +1389,19 @@ function drawField(){
   ctx.translate(OX+sx, OY+sy);
   ctx.beginPath(); ctx.rect(0,0,MAPW,MAPH); ctx.clip();
   ctx.drawImage(bg,0,0);
-  for(const it of items) drawItem(ctx, cx(it.gx), cx(it.gy)+Math.sin(it.t*4)*3, it.kind);
+  for(const it of items){
+    if(it.t < 0) continue;                       // 물줄기가 걷히기 전에는 안 보입니다
+    ctx.save();
+    if(it.t < 0.25){                             // 물이 걷히면서 톡 튀어나옵니다
+      const k = it.t/0.25;
+      ctx.globalAlpha = k;
+      ctx.translate(cx(it.gx), cx(it.gy));
+      ctx.scale(0.55+0.45*k, 0.55+0.45*k);
+      ctx.translate(-cx(it.gx), -cx(it.gy));
+    }
+    drawItem(ctx, cx(it.gx), cx(it.gy)+Math.sin(it.t*4)*3, it.kind);
+    ctx.restore();
+  }
   for(const w of waters) if(w.t>=0) drawWater(ctx,w);
   for(const b of balloons) drawBalloon(ctx,b);
   for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) if(map[y][x]===BOX) drawBox(ctx,x*TILE,y*TILE);

@@ -688,6 +688,64 @@ function clientTests(){
     check('던지기: 날아간 자리에 착지', () => assert.ok(abil.landed > 7));
     check('발차기: 앞의 물풍선이 굴러감', () => assert.ok(abil.kicked));
 
+    /* 상자를 부수면 아이템이 실제로 남아서 주울 수 있어야 합니다.
+       (상자를 부순 그 물줄기가 방금 나온 아이템을 지워버리던 버그 회귀 방지) */
+    const drop = R(`
+      const p=arena();
+      let rounds=0, survived=0, boxes=0;
+      for(let n=0;n<120;n++){
+        for(let y=1;y<12;y++) for(let x=1;x<14;x++) if(T.map[y][x]===2) T.map[y][x]=0;
+        T.balloons.length=0; T.waters.length=0; T.items.length=0;
+        T.map[4][7]=2; T.map[6][7]=2;            // 물풍선 위아래에 상자
+        p.x=7*40+20; p.y=5*40+20; p.power=1; p.maxB=1; p.alive=true; p.trapped=false;
+        T.placeBalloon(p);
+        p.x=1*40+20; p.y=1*40+20;                // 멀리 피신 (주워버리지 않게)
+        const b0=T.map.flat().filter(t=>t===2).length;
+        for(let i=0;i<240;i++){ __t+=16.7; tick(1/60); }
+        boxes += b0 - T.map.flat().filter(t=>t===2).length;
+        rounds++;
+        if(T.items.length>0) survived++;
+      }
+      return JSON.stringify({rounds, survived, boxes});
+    `);
+    check('상자를 부수면 아이템이 남음 (' + drop.survived + '/' + drop.rounds + '라운드, 상자 ' + drop.boxes + '개)',
+          () => {
+            assert.ok(drop.boxes > 100, '상자가 충분히 부서지지 않음');
+            assert.ok(drop.survived > 30,
+              '아이템이 물줄기에 즉시 지워지고 있습니다 — ' + drop.survived + '/' + drop.rounds);
+          });
+
+    /* 나온 아이템을 실제로 주울 수 있는지 */
+    const pick = R(`
+      const p=arena();
+      let got=null;
+      for(let n=0;n<60 && !got;n++){
+        for(let y=1;y<12;y++) for(let x=1;x<14;x++) if(T.map[y][x]===2) T.map[y][x]=0;
+        T.balloons.length=0; T.waters.length=0; T.items.length=0;
+        p.hold.length=0; p.maxB=1; p.power=1; p.spd=100;
+        T.map[6][7]=2;
+        p.x=7*40+20; p.y=5*40+20; p.alive=true; p.trapped=false;
+        T.placeBalloon(p);
+        p.x=1*40+20; p.y=1*40+20;
+        for(let i=0;i<240;i++){ __t+=16.7; tick(1/60); }
+        if(!T.items.length) continue;
+        const it=T.items[0];
+        const before={maxB:p.maxB, power:p.power, spd:p.spd, hold:p.hold.length,
+                      devilT:p.devilT, superT:p.superT, webT:p.webT, shipT:p.shipT};
+        p.x=it.gx*40+20; p.y=it.gy*40+20;        // 아이템 위로 이동
+        for(let i=0;i<4;i++){ __t+=16.7; tick(1/60); }
+        const changed = p.maxB!==before.maxB || p.power!==before.power || p.spd!==before.spd ||
+                        p.hold.length!==before.hold || p.devilT!==before.devilT ||
+                        p.superT!==before.superT || p.webT!==before.webT || p.shipT!==before.shipT;
+        got={kind:it.kind, consumed:T.items.length===0, changed};
+      }
+      return JSON.stringify(got||{});
+    `);
+    check('나온 아이템을 밟으면 실제로 주워짐',
+          () => { assert.ok(pick.consumed, '아이템이 사라지지 않음'); });
+    check('주우면 효과가 적용됨 (' + (pick.kind||'?') + ')',
+          () => assert.ok(pick.changed, '아무 변화가 없음'));
+
     /* 물줄기에 닿은 아이템은 사라짐 */
     const wash = R(`
       const p=arena();
